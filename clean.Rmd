@@ -1,0 +1,119 @@
+---
+title: "Train/Test, Clean, and Explore"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(readxl)
+library(DataCombine)
+library(randomForest)
+library(corrplot)
+
+```
+
+# Data cleaning and manipulation
+
+```{r, warning = FALSE, message = FALSE}
+data<- read_excel("USDA.xls")
+data<- DropNA(data)
+
+```
+
+```{r, warning = FALSE, message = FALSE}
+data<- data %>%  mutate("Protein dense" = ifelse(`Protein Score` > 2.5 & `Protein Score` < 7, 1, 0), "Carb dense" = ifelse(`Carb Score` > 2.5 & `Carb Score` < 7, 1, 0), "Fat dense" = ifelse(`TotalFat Score` > 2.5 & `TotalFat Score` < 7, 1, 0))
+
+data<- data %>% mutate("All 3" = `Protein dense` + `Carb dense` + `Fat dense`)
+data<- data %>% mutate("Density" = ifelse(`All 3` == 0, 0, ifelse(`All 3` == 1, "Null1", ifelse(`All 3` == 2, "Null2", NA))))
+sub<- colnames(data)[c(19, 21, 23)]
+
+for (i in 1:nrow(data)){
+  if (data[i, 29] == "Null1" | data[i, 29] == "Null2") {
+    x<- c(data[i, 19], data[i,21], data[i,23])
+    data[i, 29]<- sub[which.max(x)]
+  }
+}
+
+for (i in 1:nrow(data)){
+  if (data[i, 29] == "Carb Score") {
+    data[i, 29] <- '1'
+  }
+  if (data[i, 29] == "TotalFat Score") {
+    data[i,29] <- '2'
+  }
+  if (data[i, 29] == "Protein Score") {
+    data[i, 29] <- '3'
+  }
+}
+
+write.csv(data, "clean_data.csv")
+```
+
+# Exploratory data analysis- collinearity 
+
+```{r, warning = FALSE, message = FALSE}
+data<- read_excel("USDA.xls")
+data<- DropNA(data)
+
+```
+
+```{r}
+cor_data<- data[,c(4:17)]
+M <- cor(cor_data)
+corrplot(M, method = "circle")
+
+```
+
+# Distribution plots
+
+```{r}
+data %>% select(Calories) %>% 
+  ggplot(aes(x = Calories)) + geom_histogram(colour = "salmon", fill = "salmon", bins = 30) + labs(y = "Frequency") + scale_y_continuous(limits = c(0, 250), expand = c(0, 0)) + theme_classic()
+
+```
+
+```{r}
+data %>% select(Protein) %>% 
+  ggplot(aes(x = Protein)) + geom_histogram(colour = "lightseagreen", fill = "lightseagreen", bins = 40) + labs(y = "Frequency") + scale_y_continuous(limits = c(0, 250), expand = c(0, 0)) + theme_classic()
+
+```
+
+```{r}
+data %>% select(TotalFat) %>% 
+  ggplot(aes(x = TotalFat)) + geom_histogram(colour = "lemonchiffon4", fill = "lemonchiffon4", bins = 45) + labs(y = "Frequency") + scale_y_continuous(limits = c(0, 250), expand = c(0, 0)) + theme_classic()
+
+```
+
+```{r}
+data %>% select(Carbohydrate) %>% 
+  ggplot(aes(x = Carbohydrate)) + geom_histogram(colour = "steelblue2", fill = "steelblue2", bins = 25) + labs(y = "Frequency") + scale_y_continuous(limits = c(0, 250), expand = c(0, 0)) + theme_classic()
+
+```
+
+# Split into Test/Train
+
+```{r}
+train<- sample(nrow(data), 0.7*nrow(data), replace = FALSE)
+train_data <- data[train, c(3:17)]
+test_data <- data[-train, c(3:17)]
+
+```
+
+# Fit random forest model, get confusion matrix, and both types of feature importance
+
+```{r}
+model <- randomForest(as.factor(Label) ~ ., data = train_data, ntree = 500, mtry = 3, importance = TRUE)
+pred_test <- predict(model, test_data, type = "class")
+
+sum(pred_test != test_data$Label)/length(test_data$Label)
+table(pred_test, test_data$Label)  
+
+feat_imp_df <- importance(model) %>% data.frame() %>% mutate(feature = row.names(.)) 
+ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseGini), y = MeanDecreaseGini)) + scale_y_continuous(limits = c(0, 200), expand = c(0, 0)) + geom_bar(stat='identity', colour = "salmon", fill = "salmon") + coord_flip() + theme_classic() + labs(x = "Feature", y = "Importance", title = "Feature Importance")
+
+feat_imp_df <- importance(model, type = 1) %>% data.frame() %>% mutate(feature = row.names(.)) 
+ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) + scale_y_continuous(limits = c(0, 200), expand = c(0, 0)) + geom_bar(stat='identity', colour = "salmon", fill = "salmon") + coord_flip() + theme_classic() + labs(x = "Feature", y = "Importance", title = "Feature Importance")
+
+```
